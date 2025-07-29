@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Expense Tracker</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="container">
+    <h1>💸 Bachat Buddy</h1>
+
+    <form id="expense-form">
+      <input type="text" id="expense-description" placeholder="📝 Description" required />
+      <input type="number" id="expense-amount" placeholder="₹ Amount" required />
+      <select id="expense-category" required>
+        <option value="" disabled selected>Select Category</option>
+        <option value="Food">🍔 Food</option>
+        <option value="Transport">🚗 Transport</option>
+        <option value="Entertainment">🎬 Entertainment</option>
+        <option value="Other">🧾 Other</option>
+      </select>
+      <input type="date" id="expense-date" required />
+      <button type="submit">➕ Add Expense</button>
+    </form>
+
+    <div class="filter">
+      <label for="filter-category">📂 Category:</label>
+      <select id="filter-category">
+        <option value="All">All</option>
+        <option value="Food">Food</option>
+        <option value="Transport">Transport</option>
+        <option value="Entertainment">Entertainment</option>
+        <option value="Other">Other</option>
+      </select>
+
+      <label for="filter-month" style="margin-left: 20px;">📆 Month:</label>
+      <input type="month" id="filter-month" />
+    </div>
+
+    <div class="expense-table">
+      <table>
+        <thead>
+          <tr>
+            <th>📝 Description</th>
+            <th>💰 Amount</th>
+            <th>📁 Category</th>
+            <th>📅 Date</th>
+            <th>✏️/❌ Action</th>
+          </tr>
+        </thead>
+        <tbody id="expense-list"></tbody>
+      </table>
+      <div class="total-amount">
+        <strong>Total:</strong> ₹<span id="total-amount">0</span>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const form = document.getElementById('expense-form');
+    const list = document.getElementById('expense-list');
+    const totalAmount = document.getElementById('total-amount');
+    const filterCategory = document.getElementById('filter-category');
+    const filterMonth = document.getElementById('filter-month');
+
+    let allExpenses = [];
+    let editingId = null;
+
+    const categoryLimits = {
+      Food: 5000,
+      Transport: 3000,
+      Entertainment: 2000,
+      Other: 3000
+    };
+
+    const fetchExpenses = () => {
+      fetch('http://localhost:8080/expenses')
+        .then(res => res.json())
+        .then(data => {
+          allExpenses = data;
+          applyFilters(); // filters and alerts handled here
+        });
+    };
+
+    const displayExpenses = (expenses) => {
+      list.innerHTML = '';
+      let total = 0;
+      expenses.forEach(exp => {
+        total += exp.amount;
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${exp.description}</td>
+          <td>₹${exp.amount}</td>
+          <td>${exp.category}</td>
+          <td>${exp.date}</td>
+          <td>
+            <button onclick="editExpense(${exp.id})">✏️</button>
+            <button onclick="deleteExpense(${exp.id})">❌</button>
+          </td>
+        `;
+        list.appendChild(tr);
+      });
+      totalAmount.textContent = total.toFixed(2);
+    };
+
+    const deleteExpense = (id) => {
+      fetch(`http://localhost:8080/expenses/${id}`, { method: 'DELETE' })
+        .then(() => fetchExpenses());
+    };
+
+    const editExpense = (id) => {
+      const exp = allExpenses.find(e => e.id === id);
+      if (!exp) return;
+
+      document.getElementById('expense-description').value = exp.description;
+      document.getElementById('expense-amount').value = exp.amount;
+      document.getElementById('expense-category').value = exp.category;
+      document.getElementById('expense-date').value = exp.date;
+
+      editingId = id;
+      form.querySelector('button').textContent = "💾 Save Changes";
+    };
+
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+
+      const description = document.getElementById('expense-description').value.trim();
+      const amount = parseFloat(document.getElementById('expense-amount').value);
+      const category = document.getElementById('expense-category').value;
+      const date = document.getElementById('expense-date').value;
+      const today = new Date().toISOString().split('T')[0];
+
+      if (!description || amount <= 0) {
+        alert("❗ Amount must be greater than ₹0 and description should not be empty.");
+        return;
+      }
+      if (!date || date > today) {
+        alert("❗ Please enter a valid date (not in the future).");
+        return;
+      }
+
+      const expense = { description, amount, category, date };
+
+      const request = editingId !== null
+        ? fetch(`http://localhost:8080/expenses/${editingId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(expense)
+          })
+        : fetch('http://localhost:8080/expenses', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(expense)
+          });
+
+      request.then(() => {
+        editingId = null;
+        form.reset();
+        form.querySelector('button').textContent = "➕ Add Expense";
+        fetchExpenses();
+      });
+    });
+
+    function applyFilters() {
+      const selectedCategory = filterCategory.value;
+      const selectedMonth = filterMonth.value;
+
+      const filtered = allExpenses.filter(exp => {
+        const matchCategory = (selectedCategory === 'All' || exp.category === selectedCategory);
+        const matchMonth = (!selectedMonth || exp.date.startsWith(selectedMonth));
+        return matchCategory && matchMonth;
+      });
+
+      displayExpenses(filtered);
+      checkBudgetCaps(allExpenses, selectedMonth); // check alerts using all expenses, not just filtered
+    }
+
+    filterCategory.addEventListener('change', applyFilters);
+    filterMonth.addEventListener('change', applyFilters);
+
+    function checkBudgetCaps(allData, selectedMonth) {
+      if (!selectedMonth) return;
+
+      const monthlyTotals = { Food: 0, Transport: 0, Entertainment: 0, Other: 0 };
+
+      allData.forEach(exp => {
+        const expMonth = exp.date.slice(0, 7);
+        if (expMonth === selectedMonth) {
+          monthlyTotals[exp.category] += exp.amount;
+        }
+      });
+
+      for (let cat in categoryLimits) {
+        if (monthlyTotals[cat] > categoryLimits[cat]) {
+          alert(`⚠️ Limit exceeded: ₹${monthlyTotals[cat]} spent on ${cat} in ${selectedMonth}. Limit: ₹${categoryLimits[cat]}`);
+        }
+      }
+    }
+
+    window.onload = () => {
+      const today = new Date();
+      const yyyyMm = today.toISOString().slice(0, 7);
+      document.getElementById('filter-month').value = yyyyMm;
+      fetchExpenses();
+    };
+  </script>
+</body>
+</html>
